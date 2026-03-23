@@ -1,0 +1,619 @@
+{
+  "nodes": [
+    {
+      "node_id": "SYS-LEGACY-DEPOSIT",
+      "node_type": "System",
+      "label": "Legacy Deposit System",
+      "description": "COBOL/Java mainframe deposit insurance calculation system. Runs nightly batch jobs for ORC assignment and insurance calculation.",
+      "system": "legacy_deposit",
+      "properties": {"platform": "COBOL+Java", "job_scheduler": "JCL", "db": "DB2"}
+    },
+    {
+      "node_id": "SYS-TRUST-CUSTODY",
+      "node_type": "System",
+      "label": "Trust & Custody System",
+      "description": "Trust account management system. Handles IRR/REV/EBP/CUS/UTMA trust types and beneficiary tracking.",
+      "system": "trust_custody",
+      "properties": {"platform": "COBOL+Java", "job_scheduler": "JCL"}
+    },
+    {
+      "node_id": "SYS-WIRE-TRANSFER",
+      "node_type": "System",
+      "label": "Wire Transfer System",
+      "description": "SWIFT MT103/MT202 and ACH wire processing. Handles OFAC screening and settlement routing.",
+      "system": "wire_transfer",
+      "properties": {"platform": "Java+Python", "protocols": ["SWIFT", "ACH", "FedWire"]}
+    },
+    {
+      "node_id": "SYS-PIPELINE-API",
+      "node_type": "System",
+      "label": "Bank Pipeline API",
+      "description": "Containerized FastAPI orchestration service. Triggers nightly pipeline runs and exposes control evaluation and RCA context.",
+      "system": "pipeline_api",
+      "properties": {"platform": "FastAPI/Python", "port": 8080}
+    },
+    {
+      "node_id": "JOB-DAILY-DEPOSIT",
+      "node_type": "Job",
+      "label": "DAILY-INSURANCE-JOB",
+      "description": "Nightly JCL batch job for deposit insurance. Runs ORC assignment, aggregation, and SMDIA calculation steps.",
+      "system": "legacy_deposit",
+      "properties": {"schedule": "nightly", "jcl_file": "DAILY-INSURANCE-JOB.jcl"}
+    },
+    {
+      "node_id": "JOB-DAILY-TRUST",
+      "node_type": "Job",
+      "label": "DAILY-TRUST-JOB",
+      "description": "Nightly JCL batch job for trust insurance. Runs trust ORC assignment, beneficiary counting, and IRR coverage calculation.",
+      "system": "trust_custody",
+      "properties": {"schedule": "nightly", "jcl_file": "DAILY-TRUST-JOB.jcl"}
+    },
+    {
+      "node_id": "JOB-WIRE-SETTLEMENT",
+      "node_type": "Job",
+      "label": "Wire Daily Settlement Job",
+      "description": "Daily wire settlement batch. Processes SWIFT/ACH wires, runs OFAC screening, reconciliation, and coverage check.",
+      "system": "wire_transfer",
+      "properties": {"schedule": "daily", "scripts": ["process_daily_wires.sh", "acb_batch_settlement.sh"]}
+    },
+    {
+      "node_id": "JOB-NIGHTLY-PIPELINE-RUN",
+      "node_type": "Job",
+      "label": "Nightly Bank Pipeline Run",
+      "description": "Orchestrated pipeline job invoked by the Pipeline API. Executes all 14 stage pipelines across all 3 banking systems.",
+      "system": "pipeline_api",
+      "properties": {"triggered_by": "POST /runs", "stages": 14}
+    },
+    {
+      "node_id": "PL-DEPOSIT-ORC-ASSIGN",
+      "node_type": "Pipeline",
+      "label": "Deposit ORC Assignment Pipeline",
+      "description": "Assigns ORC codes (SGL/JNT/GOV/EBP/IRR/REV) to all deposit accounts. Missing IRR branch causes silent SGL fallthrough.",
+      "system": "legacy_deposit",
+      "properties": {"stage": "orc_assign", "entry_script": "DEPOSIT-INSURANCE-CALC.cob"}
+    },
+    {
+      "node_id": "PL-DEPOSIT-INSURANCE-CALC",
+      "node_type": "Pipeline",
+      "label": "Deposit Insurance Calculation Pipeline",
+      "description": "Applies SMDIA per depositor per ORC. Currently calculates per-account instead of per-depositor aggregate.",
+      "system": "legacy_deposit",
+      "properties": {"stage": "insurance", "stored_proc": "sp_calculate_insurance.sql"}
+    },
+    {
+      "node_id": "PL-TRUST-ORC-ASSIGN",
+      "node_type": "Pipeline",
+      "label": "Trust ORC Assignment Pipeline",
+      "description": "Assigns ORC codes to trust accounts. TRUST-INSURANCE-CALC.cob has no WHEN 'IRR' branch, causing misclassification.",
+      "system": "trust_custody",
+      "properties": {"stage": "orc_assign", "entry_script": "ORC-ASSIGNMENT.cob"}
+    },
+    {
+      "node_id": "PL-TRUST-INSURANCE-CALC",
+      "node_type": "Pipeline",
+      "label": "Trust Insurance Calculation Pipeline",
+      "description": "Calculates coverage for trust accounts per 12 CFR 330.13. Requires per-beneficiary-interest calculation for IRR trusts.",
+      "system": "trust_custody",
+      "properties": {"stage": "insurance", "cobol_program": "TRUST-INSURANCE-CALC.cob"}
+    },
+    {
+      "node_id": "PL-WIRE-SCREENING",
+      "node_type": "Pipeline",
+      "label": "Wire OFAC Screening Pipeline",
+      "description": "Screens wire transactions against OFAC SDN list. Settled wires passing without screening is a critical compliance gap.",
+      "system": "wire_transfer",
+      "properties": {"stage": "screening", "script": "ofac_screening.py"}
+    },
+    {
+      "node_id": "PL-WIRE-RECONCILIATION",
+      "node_type": "Pipeline",
+      "label": "Wire Reconciliation Pipeline",
+      "description": "Reconciles wire transaction counts and amounts across pipeline stages.",
+      "system": "wire_transfer",
+      "properties": {"stage": "reconciliation", "script": "reconciliation.py"}
+    },
+    {
+      "node_id": "PL-DEPOSIT-AGGREGATION",
+      "node_type": "Pipeline",
+      "label": "Deposit Aggregation Pipeline",
+      "description": "Aggregates balances by depositor and ORC code before insurance calculation.",
+      "system": "legacy_deposit",
+      "properties": {"stage": "aggregation", "stored_proc": "sp_aggregate_deposits.sql"}
+    },
+    {
+      "node_id": "SCR-ORC-ASSIGNMENT",
+      "node_type": "Script",
+      "label": "ORC-ASSIGNMENT.cob",
+      "description": "COBOL program that evaluates trust type and assigns ORC code. Missing WHEN 'IRR' branch causes IRR trusts to receive SGL classification.",
+      "system": "trust_custody",
+      "properties": {"language": "COBOL", "path": "cobol/ORC-ASSIGNMENT.cob", "known_issue": "No WHEN 'IRR' branch in EVALUATE ORC-TYPE"}
+    },
+    {
+      "node_id": "SCR-TRUST-INSURANCE-CALC",
+      "node_type": "Script",
+      "label": "TRUST-INSURANCE-CALC.cob",
+      "description": "COBOL program computing insurance coverage for trust accounts. Does not implement per-beneficiary-interest logic for IRR type.",
+      "system": "trust_custody",
+      "properties": {"language": "COBOL", "path": "cobol/TRUST-INSURANCE-CALC.cob"}
+    },
+    {
+      "node_id": "SCR-DEPOSIT-INSURANCE-CALC",
+      "node_type": "Script",
+      "label": "DEPOSIT-INSURANCE-CALC.cob",
+      "description": "COBOL program applying SMDIA per account rather than per depositor aggregate. Violates 12 CFR 330.6.",
+      "system": "legacy_deposit",
+      "properties": {"language": "COBOL", "path": "cobol/DEPOSIT-INSURANCE-CALC.cob"}
+    },
+    {
+      "node_id": "SCR-SP-CALC-INSURANCE",
+      "node_type": "Script",
+      "label": "sp_calculate_insurance.sql",
+      "description": "SQL stored procedure for insurance calculation. Hardcodes SMDIA value and calculates per-account not per-depositor.",
+      "system": "legacy_deposit",
+      "properties": {"language": "SQL", "path": "sql/sp_calculate_insurance.sql", "known_issue": "DECLARE @SMDIA = 250000 hardcoded"}
+    },
+    {
+      "node_id": "SCR-OFAC-SCREENING",
+      "node_type": "Script",
+      "label": "ofac_screening.py",
+      "description": "Python OFAC screening module. Wires settle before screening completes when batch coordination fails.",
+      "system": "wire_transfer",
+      "properties": {"language": "Python", "path": "python/ofac_screening.py"}
+    },
+    {
+      "node_id": "SCR-ORC-CLASSIFIER",
+      "node_type": "Script",
+      "label": "OrcClassifier.java",
+      "description": "Java ORC classification service for deposit accounts. Delegates trust ORC to COBOL subroutine.",
+      "system": "legacy_deposit",
+      "properties": {"language": "Java", "path": "java/OrcClassifier.java"}
+    },
+    {
+      "node_id": "TRN-ORC-CLASSIFICATION",
+      "node_type": "Transformation",
+      "label": "ORC Code Classification",
+      "description": "Evaluates account/trust attributes and assigns the appropriate ORC category. Fails when trust_type=IRR has no matching branch.",
+      "system": "trust_custody",
+      "properties": {"logic": "EVALUATE ORC-TYPE WHEN 'SGL' ... WHEN 'IRR' [MISSING]"}
+    },
+    {
+      "node_id": "TRN-INSURANCE-CALCULATION",
+      "node_type": "Transformation",
+      "label": "Insurance Amount Calculation",
+      "description": "Applies SMDIA cap to depositor balances per ORC. Should aggregate per-depositor but currently runs per-account.",
+      "system": "legacy_deposit",
+      "properties": {"logic": "MIN(balance + accrued_interest, SMDIA)", "defect": "no GROUP BY depositor_id"}
+    },
+    {
+      "node_id": "TRN-BENEFICIARY-INTEREST-CALC",
+      "node_type": "Transformation",
+      "label": "Beneficiary Interest Calculation",
+      "description": "Computes per-beneficiary-interest for IRR trusts under 12 CFR 330.13. Currently unimplemented; IRR falls through to SGL flat-cap logic.",
+      "system": "trust_custody",
+      "properties": {"regulation": "12 CFR 330.13", "status": "NOT_IMPLEMENTED"}
+    },
+    {
+      "node_id": "TRN-OFAC-SCREENING-CHECK",
+      "node_type": "Transformation",
+      "label": "OFAC SDN Screening",
+      "description": "Validates wire counterparties against OFAC SDN list before settlement. Should block settlement until CLEARED status.",
+      "system": "wire_transfer",
+      "properties": {"required_status": "CLEARED", "violation": "SETTLED wires with NOT_SCREENED status present"}
+    },
+    {
+      "node_id": "TRN-DEPOSIT-AGGREGATION",
+      "node_type": "Transformation",
+      "label": "Depositor Balance Aggregation",
+      "description": "Groups balances by depositor_id and orc_code before applying SMDIA. Required by 12 CFR 330.6.",
+      "system": "legacy_deposit",
+      "properties": {"sql": "GROUP BY depositor_id, orc_type"}
+    },
+    {
+      "node_id": "EVT-ORC-ASSIGN-LAST-CHANGE",
+      "node_type": "CodeEvent",
+      "label": "Last Change to ORC-ASSIGNMENT.cob",
+      "description": "Most recent code change to the ORC assignment COBOL program. IRR branch was never added in any commit.",
+      "system": "trust_custody",
+      "properties": {"event_type": "code_commit", "script_id": "SCR-ORC-ASSIGNMENT", "date": "2024-11-15", "author": "legacy-team", "change": "Added CUS/UTMA handling; IRR branch omitted"}
+    },
+    {
+      "node_id": "EVT-SMDIA-CONFIG-SET",
+      "node_type": "CodeEvent",
+      "label": "SMDIA Hardcoded in Config",
+      "description": "Configuration event where SMDIA value was hardcoded into insurance-rules.properties and sp_calculate_insurance.sql instead of parameterized.",
+      "system": "legacy_deposit",
+      "properties": {"event_type": "config_change", "script_id": "SCR-SP-CALC-INSURANCE", "date": "2019-04-01", "author": "config-team"}
+    },
+    {
+      "node_id": "EVT-OFAC-BATCH-ORDER-DEFECT",
+      "node_type": "CodeEvent",
+      "label": "OFAC Batch Ordering Defect Introduced",
+      "description": "Change to process_daily_wires.sh that moved OFAC screening step after ACH settlement, creating a window for unscreened settlement.",
+      "system": "wire_transfer",
+      "properties": {"event_type": "code_commit", "date": "2025-06-20", "author": "wire-team", "change": "Reordered batch steps for performance"}
+    },
+    {
+      "node_id": "DS-LEGACY-DEPOSIT-DB",
+      "node_type": "DataSource",
+      "label": "Legacy Deposit DB2 Database",
+      "description": "IBM DB2 source database holding all deposit account master data.",
+      "system": "legacy_deposit",
+      "properties": {"db_type": "DB2", "schema": "DEPOSIT_MASTER"}
+    },
+    {
+      "node_id": "DS-TRUST-CUSTODY-DB",
+      "node_type": "DataSource",
+      "label": "Trust & Custody Database",
+      "description": "Source database holding trust account master data, beneficiary records, and grantor information.",
+      "system": "trust_custody",
+      "properties": {"db_type": "PostgreSQL", "schema": "TRUST_MASTER"}
+    },
+    {
+      "node_id": "DS-WIRE-TRANSFER-DB",
+      "node_type": "DataSource",
+      "label": "Wire Transfer Database",
+      "description": "Source database holding wire transactions, SWIFT message logs, and OFAC screening results.",
+      "system": "wire_transfer",
+      "properties": {"db_type": "PostgreSQL", "schema": "WIRE_MASTER"}
+    },
+    {
+      "node_id": "DS-PIPELINE-API-DB",
+      "node_type": "DataSource",
+      "label": "Pipeline API PostgreSQL Database",
+      "description": "Canonical runtime database for the pipeline API. Holds pipeline runs, control results, incidents, and RCA data.",
+      "system": "pipeline_api",
+      "properties": {"db_type": "PostgreSQL", "db_name": "mybank"}
+    },
+    {
+      "node_id": "TBL-TRUST-ACCOUNTS",
+      "node_type": "Table",
+      "label": "trust_accounts",
+      "description": "Trust account master table. Contains trust_type and orc_assigned columns that are central to the IRR misclassification defect.",
+      "system": "trust_custody",
+      "properties": {"schema": "public", "primary_key": "trust_id"}
+    },
+    {
+      "node_id": "TBL-ACCOUNTS",
+      "node_type": "Table",
+      "label": "accounts",
+      "description": "Deposit account master table. Contains orc_code, balance, and depositor relationship.",
+      "system": "legacy_deposit",
+      "properties": {"schema": "public", "primary_key": "account_id"}
+    },
+    {
+      "node_id": "TBL-WIRE-TRANSACTIONS",
+      "node_type": "Table",
+      "label": "wire_transactions",
+      "description": "Wire transaction table. Contains ofac_status and status columns that control OFAC compliance validation.",
+      "system": "wire_transfer",
+      "properties": {"schema": "public", "primary_key": "wire_id"}
+    },
+    {
+      "node_id": "TBL-INSURANCE-RESULTS",
+      "node_type": "Table",
+      "label": "insurance_results",
+      "description": "Insurance calculation results table. Stores insured_amount, orc_type, and calc_method per run.",
+      "system": "pipeline_api",
+      "properties": {"schema": "public", "primary_key": "result_id"}
+    },
+    {
+      "node_id": "TBL-BENEFICIARIES",
+      "node_type": "Table",
+      "label": "beneficiaries",
+      "description": "Trust beneficiary table. beneficiary_count and allocation_pct are needed for IRR per-beneficiary coverage calculation.",
+      "system": "trust_custody",
+      "properties": {"schema": "public", "primary_key": "beneficiary_id"}
+    },
+    {
+      "node_id": "COL-ORC-ASSIGNED",
+      "node_type": "Column",
+      "label": "trust_accounts.orc_assigned",
+      "description": "ORC code assigned to a trust account. For IRR trusts this incorrectly contains 'SGL' due to missing branch in ORC-ASSIGNMENT.cob.",
+      "system": "trust_custody",
+      "properties": {"table": "trust_accounts", "column": "orc_assigned", "type": "VARCHAR(5)", "defect": "IRR trusts receive SGL"}
+    },
+    {
+      "node_id": "COL-TRUST-TYPE",
+      "node_type": "Column",
+      "label": "trust_accounts.trust_type",
+      "description": "Trust classification (IRR/REV/EBP/CUS/UTMA). This value drives ORC assignment but is not properly handled for IRR.",
+      "system": "trust_custody",
+      "properties": {"table": "trust_accounts", "column": "trust_type", "type": "VARCHAR(10)"}
+    },
+    {
+      "node_id": "COL-OFAC-STATUS",
+      "node_type": "Column",
+      "label": "wire_transactions.ofac_status",
+      "description": "OFAC screening status. Must be CLEARED before settlement. Gap: status remains NOT_SCREENED on settled wires.",
+      "system": "wire_transfer",
+      "properties": {"table": "wire_transactions", "column": "ofac_status", "valid_values": ["CLEARED", "NOT_SCREENED", "HELD", "PENDING"]}
+    },
+    {
+      "node_id": "COL-ORC-CODE",
+      "node_type": "Column",
+      "label": "accounts.orc_code",
+      "description": "ORC code on deposit accounts. Feeds into aggregation and SMDIA calculation.",
+      "system": "legacy_deposit",
+      "properties": {"table": "accounts", "column": "orc_code", "type": "VARCHAR(5)"}
+    },
+    {
+      "node_id": "COL-INSURED-AMOUNT",
+      "node_type": "Column",
+      "label": "insurance_results.insured_amount",
+      "description": "Computed insured amount per run. Derived from balance and ORC code. May be inflated if per-account logic is used instead of per-depositor.",
+      "system": "pipeline_api",
+      "properties": {"table": "insurance_results", "column": "insured_amount", "derived_from": "accounts.balance + orc_code logic"}
+    },
+    {
+      "node_id": "LOG-JCL-SYSOUT",
+      "node_type": "LogSource",
+      "label": "JCL SYSOUT Logs",
+      "description": "JCL batch job system output logs. Contains execution trace for DAILY-INSURANCE-JOB and DAILY-TRUST-JOB.",
+      "system": "legacy_deposit",
+      "properties": {"log_type": "batch_stdout", "retention": "30d", "location": "SYSOUT"}
+    },
+    {
+      "node_id": "LOG-API-STDOUT",
+      "node_type": "LogSource",
+      "label": "Pipeline API Application Logs",
+      "description": "Structured JSON logs from the bank-pipeline-api service. Captures stage execution, control evaluation, and incident creation.",
+      "system": "pipeline_api",
+      "properties": {"log_type": "structured_json", "stream": "stdout", "format": "JSON"}
+    },
+    {
+      "node_id": "LOG-WIRE-AUDIT",
+      "node_type": "LogSource",
+      "label": "Wire Transfer Audit Log",
+      "description": "Audit trail for SWIFT/ACH wire transactions. Records OFAC screening timestamps and settlement events.",
+      "system": "wire_transfer",
+      "properties": {"log_type": "audit_trail", "contains": ["ofac_screening_ts", "settlement_ts"]}
+    },
+    {
+      "node_id": "REG-12-CFR-330",
+      "node_type": "Regulation",
+      "label": "12 CFR Part 330",
+      "description": "FDIC deposit insurance coverage regulations. Defines coverage limits, ORC categories, and calculation methodology.",
+      "system": "all",
+      "properties": {"authority": "FDIC", "full_title": "12 CFR Part 330 — Deposit Insurance Coverage"}
+    },
+    {
+      "node_id": "REG-FDIC-IT-GUIDE",
+      "node_type": "Regulation",
+      "label": "FDIC IT Examination Handbook",
+      "description": "FDIC IT guide defining pending reason codes P01-P10 and system implementation requirements for insurance calculation.",
+      "system": "all",
+      "properties": {"authority": "FDIC", "version": "v3.0"}
+    },
+    {
+      "node_id": "REG-OFAC-RULES",
+      "node_type": "Regulation",
+      "label": "OFAC SDN Compliance Requirements",
+      "description": "OFAC requirements mandate screening all wire counterparties against the SDN list prior to settlement.",
+      "system": "wire_transfer",
+      "properties": {"authority": "US Treasury / OFAC", "requirement": "Screen before settlement"}
+    },
+    {
+      "node_id": "CO-ORC-COMPLETENESS",
+      "node_type": "ControlObjective",
+      "label": "ORC Classification Completeness",
+      "description": "All accounts and trusts must be assigned a complete and correct ORC code. No account may fall through to a default ORC due to missing logic branches.",
+      "system": "trust_custody",
+      "properties": {"maps_to": "CTL-TRUST-001, CTL-DEP-002, CTL-DEP-007"}
+    },
+    {
+      "node_id": "CO-INSURANCE-ACCURACY",
+      "node_type": "ControlObjective",
+      "label": "Insurance Calculation Accuracy",
+      "description": "Insurance coverage must be calculated per depositor per ORC, applying SMDIA correctly. No per-account calculation permitted.",
+      "system": "legacy_deposit",
+      "properties": {"maps_to": "CTL-DEP-001, CTL-DEP-004, CTL-DEP-008"}
+    },
+    {
+      "node_id": "CO-OFAC-SCREENING",
+      "node_type": "ControlObjective",
+      "label": "OFAC Pre-Settlement Screening",
+      "description": "All wire transactions must have OFAC status CLEARED before settlement is processed.",
+      "system": "wire_transfer",
+      "properties": {"maps_to": "CTL-WIRE-001, CTL-WIRE-002"}
+    },
+    {
+      "node_id": "CO-TRUST-BENEFICIARY",
+      "node_type": "ControlObjective",
+      "label": "Trust Beneficiary Completeness",
+      "description": "Every trust account must have at least one active beneficiary recorded. IRR trusts require per-beneficiary coverage.",
+      "system": "trust_custody",
+      "properties": {"maps_to": "CTL-TRUST-002, CTL-TRUST-003, CTL-TRUST-004"}
+    },
+    {
+      "node_id": "RULE-IRR-ORC-BRANCH",
+      "node_type": "Rule",
+      "label": "IRR Branch Must Exist in ORC Evaluator",
+      "description": "ORC-ASSIGNMENT.cob EVALUATE statement must contain a WHEN 'IRR' branch. Absence causes silent SGL fallthrough violating 12 CFR 330.13.",
+      "system": "trust_custody",
+      "properties": {"control_ids": ["CTL-TRUST-001", "CTL-DEP-002"], "cfr": "12 CFR 330.13"}
+    },
+    {
+      "node_id": "RULE-PER-DEPOSITOR-CALC",
+      "node_type": "Rule",
+      "label": "SMDIA Applied Per-Depositor Not Per-Account",
+      "description": "Insurance calculation must aggregate all balances for a depositor under the same ORC before applying the $250K cap.",
+      "system": "legacy_deposit",
+      "properties": {"control_ids": ["CTL-DEP-001"], "cfr": "12 CFR 330.6"}
+    },
+    {
+      "node_id": "RULE-OFAC-BEFORE-SETTLE",
+      "node_type": "Rule",
+      "label": "OFAC Screening Must Precede Settlement",
+      "description": "Wire settlement must be blocked until OFAC screening returns CLEARED. Batch step ordering must enforce this sequencing.",
+      "system": "wire_transfer",
+      "properties": {"control_ids": ["CTL-WIRE-001", "CTL-WIRE-002"], "authority": "OFAC"}
+    },
+    {
+      "node_id": "RULE-SMDIA-CONFIGURABLE",
+      "node_type": "Rule",
+      "label": "SMDIA Must Be Runtime-Configurable",
+      "description": "SMDIA value must be loaded from environment or database at runtime. Hardcoded values in scripts or config files violate change control requirements.",
+      "system": "legacy_deposit",
+      "properties": {"control_ids": ["CTL-DEP-004"]}
+    },
+    {
+      "node_id": "OWN-TRUST-OPERATIONS",
+      "node_type": "Owner",
+      "label": "Trust Operations Team",
+      "description": "Operational owner of trust ORC assignment and trust insurance calculation pipelines and jobs.",
+      "system": "trust_custody",
+      "properties": {"email": "trust-ops@mybank.internal", "escalation_p1": "trust-director@mybank.internal"}
+    },
+    {
+      "node_id": "OWN-DEPOSIT-COMPLIANCE",
+      "node_type": "Owner",
+      "label": "Deposit Compliance Team",
+      "description": "Owner of deposit insurance controls, SMDIA configuration, and ORC completeness for deposit accounts.",
+      "system": "legacy_deposit",
+      "properties": {"email": "deposit-compliance@mybank.internal", "escalation_p1": "chief-compliance@mybank.internal"}
+    },
+    {
+      "node_id": "OWN-WIRE-OPERATIONS",
+      "node_type": "Owner",
+      "label": "Wire Operations Team",
+      "description": "Owner of wire transfer pipelines, OFAC screening job, and settlement reconciliation.",
+      "system": "wire_transfer",
+      "properties": {"email": "wire-ops@mybank.internal", "escalation_p1": "wire-director@mybank.internal"}
+    },
+    {
+      "node_id": "OWN-PLATFORM-ENGINEERING",
+      "node_type": "Owner",
+      "label": "Platform Engineering Team",
+      "description": "Owner of the bank-pipeline-api service, infrastructure, and control engine.",
+      "system": "pipeline_api",
+      "properties": {"email": "platform-eng@mybank.internal"}
+    },
+    {
+      "node_id": "DS-INSURANCE-RULES-CONFIG",
+      "node_type": "DataSource",
+      "label": "insurance-rules.properties",
+      "description": "Config file containing SMDIA value, supported ORC types, EBP mode, and pending codes. Hardcoded SMDIA is a known defect.",
+      "system": "legacy_deposit",
+      "properties": {"path": "config/insurance-rules.properties", "format": "Java properties"}
+    }
+  ],
+  "edges": [
+    {"from_node_id": "SYS-LEGACY-DEPOSIT", "to_node_id": "JOB-DAILY-DEPOSIT", "relationship": "RUNS_JOB", "weight": 1.0},
+    {"from_node_id": "SYS-TRUST-CUSTODY", "to_node_id": "JOB-DAILY-TRUST", "relationship": "RUNS_JOB", "weight": 1.0},
+    {"from_node_id": "SYS-WIRE-TRANSFER", "to_node_id": "JOB-WIRE-SETTLEMENT", "relationship": "RUNS_JOB", "weight": 1.0},
+    {"from_node_id": "SYS-PIPELINE-API", "to_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "relationship": "RUNS_JOB", "weight": 1.0},
+
+    {"from_node_id": "JOB-DAILY-DEPOSIT", "to_node_id": "JOB-DAILY-TRUST", "relationship": "DEPENDS_ON", "weight": 0.8, "description": "Trust job runs after deposit ORC assignment"},
+    {"from_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "to_node_id": "JOB-DAILY-DEPOSIT", "relationship": "DEPENDS_ON", "weight": 1.0},
+    {"from_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "to_node_id": "JOB-DAILY-TRUST", "relationship": "DEPENDS_ON", "weight": 1.0},
+    {"from_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "to_node_id": "JOB-WIRE-SETTLEMENT", "relationship": "DEPENDS_ON", "weight": 1.0},
+
+    {"from_node_id": "JOB-DAILY-DEPOSIT", "to_node_id": "PL-DEPOSIT-ORC-ASSIGN", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-DEPOSIT", "to_node_id": "PL-DEPOSIT-AGGREGATION", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-DEPOSIT", "to_node_id": "PL-DEPOSIT-INSURANCE-CALC", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-TRUST", "to_node_id": "PL-TRUST-ORC-ASSIGN", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-TRUST", "to_node_id": "PL-TRUST-INSURANCE-CALC", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-WIRE-SETTLEMENT", "to_node_id": "PL-WIRE-SCREENING", "relationship": "EXECUTES", "weight": 1.0},
+    {"from_node_id": "JOB-WIRE-SETTLEMENT", "to_node_id": "PL-WIRE-RECONCILIATION", "relationship": "EXECUTES", "weight": 1.0},
+
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "SCR-ORC-ASSIGNMENT", "relationship": "USES_SCRIPT", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "SCR-ORC-CLASSIFIER", "relationship": "USES_SCRIPT", "weight": 0.8},
+    {"from_node_id": "PL-TRUST-INSURANCE-CALC", "to_node_id": "SCR-TRUST-INSURANCE-CALC", "relationship": "USES_SCRIPT", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-ORC-ASSIGN", "to_node_id": "SCR-ORC-CLASSIFIER", "relationship": "USES_SCRIPT", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-INSURANCE-CALC", "to_node_id": "SCR-DEPOSIT-INSURANCE-CALC", "relationship": "USES_SCRIPT", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-INSURANCE-CALC", "to_node_id": "SCR-SP-CALC-INSURANCE", "relationship": "USES_SCRIPT", "weight": 1.0},
+    {"from_node_id": "PL-WIRE-SCREENING", "to_node_id": "SCR-OFAC-SCREENING", "relationship": "USES_SCRIPT", "weight": 1.0},
+
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "TRN-ORC-CLASSIFICATION", "relationship": "HAS_TRANSFORMATION", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-ORC-ASSIGN", "to_node_id": "TRN-ORC-CLASSIFICATION", "relationship": "HAS_TRANSFORMATION", "weight": 0.9},
+    {"from_node_id": "PL-TRUST-INSURANCE-CALC", "to_node_id": "TRN-BENEFICIARY-INTEREST-CALC", "relationship": "HAS_TRANSFORMATION", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-INSURANCE-CALC", "to_node_id": "TRN-INSURANCE-CALCULATION", "relationship": "HAS_TRANSFORMATION", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-AGGREGATION", "to_node_id": "TRN-DEPOSIT-AGGREGATION", "relationship": "HAS_TRANSFORMATION", "weight": 1.0},
+    {"from_node_id": "PL-WIRE-SCREENING", "to_node_id": "TRN-OFAC-SCREENING-CHECK", "relationship": "HAS_TRANSFORMATION", "weight": 1.0},
+
+    {"from_node_id": "SCR-ORC-ASSIGNMENT", "to_node_id": "TRN-ORC-CLASSIFICATION", "relationship": "TYPICALLY_IMPLEMENTS", "weight": 1.0},
+    {"from_node_id": "SCR-TRUST-INSURANCE-CALC", "to_node_id": "TRN-BENEFICIARY-INTEREST-CALC", "relationship": "TYPICALLY_IMPLEMENTS", "weight": 1.0},
+    {"from_node_id": "SCR-DEPOSIT-INSURANCE-CALC", "to_node_id": "TRN-INSURANCE-CALCULATION", "relationship": "TYPICALLY_IMPLEMENTS", "weight": 1.0},
+    {"from_node_id": "SCR-OFAC-SCREENING", "to_node_id": "TRN-OFAC-SCREENING-CHECK", "relationship": "TYPICALLY_IMPLEMENTS", "weight": 1.0},
+
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "TBL-TRUST-ACCOUNTS", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "TBL-TRUST-ACCOUNTS", "relationship": "WRITES", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-INSURANCE-CALC", "to_node_id": "TBL-TRUST-ACCOUNTS", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-INSURANCE-CALC", "to_node_id": "TBL-BENEFICIARIES", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-INSURANCE-CALC", "to_node_id": "TBL-INSURANCE-RESULTS", "relationship": "WRITES", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-ORC-ASSIGN", "to_node_id": "TBL-ACCOUNTS", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-ORC-ASSIGN", "to_node_id": "TBL-ACCOUNTS", "relationship": "WRITES", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-INSURANCE-CALC", "to_node_id": "TBL-ACCOUNTS", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-DEPOSIT-INSURANCE-CALC", "to_node_id": "TBL-INSURANCE-RESULTS", "relationship": "WRITES", "weight": 1.0},
+    {"from_node_id": "PL-WIRE-SCREENING", "to_node_id": "TBL-WIRE-TRANSACTIONS", "relationship": "READS", "weight": 1.0},
+    {"from_node_id": "PL-WIRE-SCREENING", "to_node_id": "TBL-WIRE-TRANSACTIONS", "relationship": "WRITES", "weight": 1.0},
+
+    {"from_node_id": "DS-TRUST-CUSTODY-DB", "to_node_id": "TBL-TRUST-ACCOUNTS", "relationship": "CONTAINS", "weight": 1.0},
+    {"from_node_id": "DS-TRUST-CUSTODY-DB", "to_node_id": "TBL-BENEFICIARIES", "relationship": "CONTAINS", "weight": 1.0},
+    {"from_node_id": "DS-LEGACY-DEPOSIT-DB", "to_node_id": "TBL-ACCOUNTS", "relationship": "CONTAINS", "weight": 1.0},
+    {"from_node_id": "DS-WIRE-TRANSFER-DB", "to_node_id": "TBL-WIRE-TRANSACTIONS", "relationship": "CONTAINS", "weight": 1.0},
+    {"from_node_id": "DS-PIPELINE-API-DB", "to_node_id": "TBL-INSURANCE-RESULTS", "relationship": "CONTAINS", "weight": 1.0},
+
+    {"from_node_id": "TBL-TRUST-ACCOUNTS", "to_node_id": "COL-ORC-ASSIGNED", "relationship": "HAS_COLUMN", "weight": 1.0},
+    {"from_node_id": "TBL-TRUST-ACCOUNTS", "to_node_id": "COL-TRUST-TYPE", "relationship": "HAS_COLUMN", "weight": 1.0},
+    {"from_node_id": "TBL-ACCOUNTS", "to_node_id": "COL-ORC-CODE", "relationship": "HAS_COLUMN", "weight": 1.0},
+    {"from_node_id": "TBL-WIRE-TRANSACTIONS", "to_node_id": "COL-OFAC-STATUS", "relationship": "HAS_COLUMN", "weight": 1.0},
+    {"from_node_id": "TBL-INSURANCE-RESULTS", "to_node_id": "COL-INSURED-AMOUNT", "relationship": "HAS_COLUMN", "weight": 1.0},
+
+    {"from_node_id": "COL-ORC-ASSIGNED", "to_node_id": "COL-TRUST-TYPE", "relationship": "DERIVED_FROM", "weight": 1.0, "description": "orc_assigned should be derived from trust_type but IRR branch is missing"},
+    {"from_node_id": "COL-INSURED-AMOUNT", "to_node_id": "COL-ORC-CODE", "relationship": "DERIVED_FROM", "weight": 0.9},
+
+    {"from_node_id": "TBL-TRUST-ACCOUNTS", "to_node_id": "DS-TRUST-CUSTODY-DB", "relationship": "SOURCED_FROM", "weight": 1.0},
+    {"from_node_id": "TBL-ACCOUNTS", "to_node_id": "DS-LEGACY-DEPOSIT-DB", "relationship": "SOURCED_FROM", "weight": 1.0},
+    {"from_node_id": "TBL-WIRE-TRANSACTIONS", "to_node_id": "DS-WIRE-TRANSFER-DB", "relationship": "SOURCED_FROM", "weight": 1.0},
+
+    {"from_node_id": "SCR-ORC-ASSIGNMENT", "to_node_id": "EVT-ORC-ASSIGN-LAST-CHANGE", "relationship": "CHANGED_BY", "weight": 1.0},
+    {"from_node_id": "SCR-SP-CALC-INSURANCE", "to_node_id": "EVT-SMDIA-CONFIG-SET", "relationship": "CHANGED_BY", "weight": 1.0},
+    {"from_node_id": "SCR-OFAC-SCREENING", "to_node_id": "EVT-OFAC-BATCH-ORDER-DEFECT", "relationship": "CHANGED_BY", "weight": 1.0},
+
+    {"from_node_id": "SYS-LEGACY-DEPOSIT", "to_node_id": "LOG-JCL-SYSOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-DEPOSIT", "to_node_id": "LOG-JCL-SYSOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "JOB-DAILY-TRUST", "to_node_id": "LOG-JCL-SYSOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "SYS-PIPELINE-API", "to_node_id": "LOG-API-STDOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "to_node_id": "LOG-API-STDOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "PL-TRUST-ORC-ASSIGN", "to_node_id": "LOG-JCL-SYSOUT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "SYS-WIRE-TRANSFER", "to_node_id": "LOG-WIRE-AUDIT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "JOB-WIRE-SETTLEMENT", "to_node_id": "LOG-WIRE-AUDIT", "relationship": "LOGGED_IN", "weight": 1.0},
+    {"from_node_id": "PL-WIRE-SCREENING", "to_node_id": "LOG-WIRE-AUDIT", "relationship": "LOGGED_IN", "weight": 1.0},
+
+    {"from_node_id": "REG-12-CFR-330", "to_node_id": "CO-ORC-COMPLETENESS", "relationship": "MANDATES", "weight": 1.0},
+    {"from_node_id": "REG-12-CFR-330", "to_node_id": "CO-INSURANCE-ACCURACY", "relationship": "MANDATES", "weight": 1.0},
+    {"from_node_id": "REG-12-CFR-330", "to_node_id": "CO-TRUST-BENEFICIARY", "relationship": "MANDATES", "weight": 1.0},
+    {"from_node_id": "REG-OFAC-RULES", "to_node_id": "CO-OFAC-SCREENING", "relationship": "MANDATES", "weight": 1.0},
+    {"from_node_id": "REG-FDIC-IT-GUIDE", "to_node_id": "CO-ORC-COMPLETENESS", "relationship": "MANDATES", "weight": 0.8},
+
+    {"from_node_id": "CO-ORC-COMPLETENESS", "to_node_id": "RULE-IRR-ORC-BRANCH", "relationship": "IMPLEMENTED_BY", "weight": 1.0},
+    {"from_node_id": "CO-INSURANCE-ACCURACY", "to_node_id": "RULE-PER-DEPOSITOR-CALC", "relationship": "IMPLEMENTED_BY", "weight": 1.0},
+    {"from_node_id": "CO-INSURANCE-ACCURACY", "to_node_id": "RULE-SMDIA-CONFIGURABLE", "relationship": "IMPLEMENTED_BY", "weight": 0.9},
+    {"from_node_id": "CO-OFAC-SCREENING", "to_node_id": "RULE-OFAC-BEFORE-SETTLE", "relationship": "IMPLEMENTED_BY", "weight": 1.0},
+
+    {"from_node_id": "RULE-IRR-ORC-BRANCH", "to_node_id": "TRN-ORC-CLASSIFICATION", "relationship": "ENFORCED_BY", "weight": 1.0},
+    {"from_node_id": "RULE-PER-DEPOSITOR-CALC", "to_node_id": "TRN-INSURANCE-CALCULATION", "relationship": "ENFORCED_BY", "weight": 1.0},
+    {"from_node_id": "RULE-PER-DEPOSITOR-CALC", "to_node_id": "TRN-DEPOSIT-AGGREGATION", "relationship": "ENFORCED_BY", "weight": 0.9},
+    {"from_node_id": "RULE-OFAC-BEFORE-SETTLE", "to_node_id": "TRN-OFAC-SCREENING-CHECK", "relationship": "ENFORCED_BY", "weight": 1.0},
+
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "PL-TRUST-ORC-ASSIGN", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "PL-TRUST-INSURANCE-CALC", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "JOB-DAILY-TRUST", "relationship": "OWNS_JOB", "weight": 1.0},
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "SYS-TRUST-CUSTODY", "relationship": "OWNS_SYSTEM", "weight": 1.0},
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "CO-ORC-COMPLETENESS", "relationship": "OWNS_CONTROL", "weight": 1.0},
+    {"from_node_id": "OWN-TRUST-OPERATIONS", "to_node_id": "CO-TRUST-BENEFICIARY", "relationship": "OWNS_CONTROL", "weight": 1.0},
+    {"from_node_id": "OWN-DEPOSIT-COMPLIANCE", "to_node_id": "PL-DEPOSIT-ORC-ASSIGN", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-DEPOSIT-COMPLIANCE", "to_node_id": "PL-DEPOSIT-INSURANCE-CALC", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-DEPOSIT-COMPLIANCE", "to_node_id": "JOB-DAILY-DEPOSIT", "relationship": "OWNS_JOB", "weight": 1.0},
+    {"from_node_id": "OWN-DEPOSIT-COMPLIANCE", "to_node_id": "SYS-LEGACY-DEPOSIT", "relationship": "OWNS_SYSTEM", "weight": 1.0},
+    {"from_node_id": "OWN-DEPOSIT-COMPLIANCE", "to_node_id": "CO-INSURANCE-ACCURACY", "relationship": "OWNS_CONTROL", "weight": 1.0},
+    {"from_node_id": "OWN-WIRE-OPERATIONS", "to_node_id": "PL-WIRE-SCREENING", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-WIRE-OPERATIONS", "to_node_id": "PL-WIRE-RECONCILIATION", "relationship": "OWNS_PIPELINE", "weight": 1.0},
+    {"from_node_id": "OWN-WIRE-OPERATIONS", "to_node_id": "JOB-WIRE-SETTLEMENT", "relationship": "OWNS_JOB", "weight": 1.0},
+    {"from_node_id": "OWN-WIRE-OPERATIONS", "to_node_id": "SYS-WIRE-TRANSFER", "relationship": "OWNS_SYSTEM", "weight": 1.0},
+    {"from_node_id": "OWN-WIRE-OPERATIONS", "to_node_id": "CO-OFAC-SCREENING", "relationship": "OWNS_CONTROL", "weight": 1.0},
+    {"from_node_id": "OWN-PLATFORM-ENGINEERING", "to_node_id": "SYS-PIPELINE-API", "relationship": "OWNS_SYSTEM", "weight": 1.0},
+    {"from_node_id": "OWN-PLATFORM-ENGINEERING", "to_node_id": "JOB-NIGHTLY-PIPELINE-RUN", "relationship": "OWNS_JOB", "weight": 1.0}
+  ]
+}

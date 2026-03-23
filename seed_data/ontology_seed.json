@@ -1,0 +1,359 @@
+{
+  "nodes": [
+    {
+      "node_id": "ONT-SYM-INSURANCE-OVERSTATEMENT",
+      "node_type": "Symptom",
+      "label": "Insurance Amount Overstated",
+      "description": "Reported insured_amount exceeds the correct regulatory limit for the depositor/ORC combination.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["depositor_id", "orc_code", "insured_amount", "balance"],
+      "stop_condition": "confidence >= 0.85 OR evidence_count >= 5",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-SYM-INSURANCE-UNDERSTATEMENT",
+      "node_type": "Symptom",
+      "label": "Insurance Amount Understated",
+      "description": "Reported insured_amount is below the correct regulatory coverage for the depositor/ORC combination.",
+      "system": "trust_custody",
+      "evidence_fields": ["depositor_id", "orc_code", "insured_amount", "balance", "beneficiary_count"],
+      "stop_condition": "confidence >= 0.85 OR evidence_count >= 5",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-SYM-ORC-MISCLASSIFICATION",
+      "node_type": "Symptom",
+      "label": "ORC Code Misclassified",
+      "description": "Account or trust is assigned an incorrect ORC code, leading to wrong coverage calculation.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["account_id", "trust_id", "orc_code", "orc_assigned", "trust_type"],
+      "stop_condition": "confidence >= 0.85 OR evidence_count >= 4",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-SYM-RECONCILIATION-BREAK",
+      "node_type": "Symptom",
+      "label": "Pipeline Reconciliation Break",
+      "description": "Balances or record counts do not reconcile between pipeline stages.",
+      "system": "wire_transfer",
+      "evidence_fields": ["run_id", "stage_name", "records_in", "records_out"],
+      "stop_condition": "confidence >= 0.80 OR evidence_count >= 4",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-SYM-UNSCREENED-WIRE",
+      "node_type": "Symptom",
+      "label": "Wire Processed Without OFAC Clearance",
+      "description": "Wire transaction settled or included in insurance without OFAC screening completed.",
+      "system": "wire_transfer",
+      "evidence_fields": ["wire_id", "ofac_status", "status", "amount", "settlement_channel"],
+      "stop_condition": "confidence >= 0.90 OR evidence_count >= 3",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-SYM-PENDING-MISROUTE",
+      "node_type": "Symptom",
+      "label": "Unresolvable Account Silently Defaulted",
+      "description": "Account that should be routed to the pending file was silently assigned SGL due to missing pending code configuration.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["account_id", "orc_code", "orc_pending_flag", "orc_pending_code"],
+      "stop_condition": "confidence >= 0.80 OR evidence_count >= 4",
+      "confidence_boost": 0.05
+    },
+    {
+      "node_id": "ONT-MECH-PER-ACCOUNT-CALC",
+      "node_type": "Mechanism",
+      "label": "Insurance Applied Per-Account Not Per-Depositor",
+      "description": "The calculation engine applies SMDIA per individual account rather than aggregating all accounts for a depositor under the same ORC before applying the limit.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["depositor_id", "orc_code", "account_count", "total_balance", "total_insured"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-IRR-NOT-IMPLEMENTED",
+      "node_type": "Mechanism",
+      "label": "IRR ORC Branch Missing in Code",
+      "description": "The ORC assignment and insurance calculation programs have no implementation path for IRR (Irrevocable Trust) accounts. These accounts fall through to SGL default.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["trust_type", "orc_assigned", "trust_id", "source_code_ref"],
+      "stop_condition": "confidence >= 0.85 OR source_code_reference_found",
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-MECH-EBP-PER-PLAN",
+      "node_type": "Mechanism",
+      "label": "EBP Coverage Uses Plan Headcount Not Vested Participants",
+      "description": "EBP insurance is capped at $250K (one SMDIA) for the entire plan instead of calculating $250K per vested participant as required by 12 CFR 330.14.",
+      "system": "trust_custody",
+      "evidence_fields": ["participant_count", "insured_amount", "orc_assigned", "trust_type"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-HOLD-AMT-MISAPPLIED",
+      "node_type": "Mechanism",
+      "label": "Hold Amount Subtracted from Allocated Balance",
+      "description": "The transformation stage incorrectly subtracts hold_amount from balance before passing to the insurance calculator, reducing the insurance basis.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["account_id", "balance", "hold_amount", "allocated_amount"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-BATCH-OFAC-LAG",
+      "node_type": "Mechanism",
+      "label": "OFAC Screening Runs in 6-Hour Batch Cycle",
+      "description": "The ofac_screening.py engine is designed for batch execution with up to 6-hour lag. Real-time wires enter settlement before screening completes.",
+      "system": "wire_transfer",
+      "evidence_fields": ["ofac_status", "value_date", "settlement_channel", "screening_timestamp"],
+      "stop_condition": "confidence >= 0.90 OR source_code_reference_found",
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-MECH-CONTINGENT-BENE-IGNORED",
+      "node_type": "Mechanism",
+      "label": "Only Primary Beneficiaries Counted for REV Coverage",
+      "description": "TRUST-INSURANCE-CALC.cob filters beneficiaries to PRIMARY type only. CONTINGENT and REMAINDER beneficiaries are excluded, understating REV trust coverage.",
+      "system": "trust_custody",
+      "evidence_fields": ["trust_id", "beneficiary_count", "beneficiary_type", "insured_amount"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-DECEASED-BENE-COUNTED",
+      "node_type": "Mechanism",
+      "label": "Deceased Beneficiaries Not Filtered from Coverage Count",
+      "description": "TRUST-INSURANCE-CALC.cob does not filter out beneficiaries with is_deceased=TRUE. Each deceased beneficiary incorrectly adds $250K to the reported insured total.",
+      "system": "trust_custody",
+      "evidence_fields": ["trust_id", "beneficiary_id", "is_deceased", "insured_amount"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-CUSTODIAL-SGL-DEFAULT",
+      "node_type": "Mechanism",
+      "label": "Custodial Accounts Default to SGL ORC",
+      "description": "Accounts with trust_type=CUS are assigned SGL ORC instead of mapping to the underlying ownership class (e.g., CRA for IRA custodial accounts).",
+      "system": "trust_custody",
+      "evidence_fields": ["trust_type", "orc_assigned", "trust_id"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-ACH-RETURN-NOT-DEDUCTED",
+      "node_type": "Mechanism",
+      "label": "ACH NSF Returns Not Netted from Insurance Basis",
+      "description": "The wire reconciliation stage counts ACH SETTLED credits but does not deduct ACH RETURNED debits, overstating the insurance basis for affected depositors.",
+      "system": "wire_transfer",
+      "evidence_fields": ["ordering_customer_id", "message_type", "status", "amount"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-COLLATERAL-NOT-CHECKED",
+      "node_type": "Mechanism",
+      "label": "Government Deposit Collateral Flag Not Verified",
+      "description": "GOV ORC accounts require collateral for uninsured portions per 12 CFR 330.15. The collateral_pledged flag is not evaluated during validation or calculation.",
+      "system": "wire_transfer",
+      "evidence_fields": ["orc_type", "collateral_pledged", "balance", "insured_amount"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-MECH-NATURAL-PERSON-SKIPPED",
+      "node_type": "Mechanism",
+      "label": "JNT Co-Owner Natural Person Check Not Performed",
+      "description": "ORC-ASSIGNMENT.cob does not verify that JNT co-owners are natural persons per 12 CFR 330.9. Business entities could be incorrectly classified as JNT.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["account_id", "orc_code", "joint_owner_id", "natural_person"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-RC-MULTI-ACCT-AGG-MISSING",
+      "node_type": "RootCause",
+      "label": "Depositor-Level Aggregation Not Implemented",
+      "description": "The core insurance calculation was written to process accounts individually without aggregating by depositor+ORC. This architectural gap causes systematic overstatement of insured amounts for multi-account depositors.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref", "depositor_id", "account_count"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-RC-MISSING-ORC-BRANCH",
+      "node_type": "RootCause",
+      "label": "ORC Code Has No Implementation Path",
+      "description": "The ORC assignment and insurance calculation programs were not updated when the IRR ORC category was added to the regulatory framework. The code has no branch for IRR, causing silent SGL fallthrough.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref", "orc_mapping_status", "trust_type"],
+      "stop_condition": "confidence >= 0.85 OR source_code_reference_found",
+      "confidence_boost": 0.20
+    },
+    {
+      "node_id": "ONT-RC-CONFIG-HARDCODE",
+      "node_type": "RootCause",
+      "label": "Regulatory Parameter Hardcoded in Properties File or Code",
+      "description": "Key regulatory parameters (SMDIA, SDN update frequency, supported ORC list) are hardcoded in configuration files or source code instead of being loaded from a configurable parameter table.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["config_snapshot", "config_key", "config_value"],
+      "stop_condition": "confidence >= 0.80",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-RC-CONFIG-INCOMPLETE",
+      "node_type": "RootCause",
+      "label": "Configuration Missing Required Entries",
+      "description": "The configuration file is missing required entries (pending codes P06-P10, IRR ORC in supported list). This causes silent fallback behavior instead of explicit routing.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["config_snapshot", "missing_config_keys"],
+      "stop_condition": "confidence >= 0.80",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-RC-SCREENING-NOT-REALTIME",
+      "node_type": "RootCause",
+      "label": "Screening System Architecture is Batch-Only",
+      "description": "ofac_screening.py was designed as a batch process from inception. The architecture does not support synchronous screening calls at settlement time, creating a structural gap in compliance.",
+      "system": "wire_transfer",
+      "evidence_fields": ["source_code_ref", "screening_mode", "batch_schedule"],
+      "stop_condition": "confidence >= 0.85 OR source_code_reference_found",
+      "confidence_boost": 0.20
+    },
+    {
+      "node_id": "ONT-RC-BENEFICIARY-FILTER-GAP",
+      "node_type": "RootCause",
+      "label": "Beneficiary Status Filter Not Applied in Calculation",
+      "description": "The trust insurance calculation fetches all beneficiary records without filtering by type (PRIMARY/CONTINGENT/REMAINDER) or life status (is_deceased). Both gaps were present in the original implementation.",
+      "system": "trust_custody",
+      "evidence_fields": ["source_code_ref", "beneficiary_type_distribution", "deceased_count"],
+      "stop_condition": "confidence >= 0.85",
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-RC-VALIDATION-RULE-MISSING",
+      "node_type": "RootCause",
+      "label": "Required Validation Rule Not Coded",
+      "description": "A required validation check (COB cutoff enforcement, MT202 CIF requirement, natural person verification) was not implemented in the relevant code path.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref", "missing_validation_check"],
+      "stop_condition": "confidence >= 0.80",
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-COMP-DEPOSIT-CALC-COBOL",
+      "node_type": "Component",
+      "label": "DEPOSIT-INSURANCE-CALC.cob",
+      "description": "COBOL program responsible for calculating FDIC deposit insurance per ORC category. Written 2008-03-15. Contains multiple known compliance gaps.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-ORC-ASSIGN-COBOL",
+      "node_type": "Component",
+      "label": "ORC-ASSIGNMENT.cob",
+      "description": "COBOL program responsible for classifying deposit accounts into FDIC ORC categories. Written 2007-11-20. Missing IRR branch; silently defaults unresolvable accounts to SGL.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-TRUST-CALC-COBOL",
+      "node_type": "Component",
+      "label": "TRUST-INSURANCE-CALC.cob",
+      "description": "COBOL program for trust/custody insurance calculation. Contains 10 documented known issues including IRR not implemented, contingent beneficiary exclusion, and deceased beneficiary overcounting.",
+      "system": "trust_custody",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-OFAC-PYTHON",
+      "node_type": "Component",
+      "label": "ofac_screening.py",
+      "description": "Python OFAC/sanctions screening engine. Batch-mode only, SDN-only, 85% match threshold, no fuzzy matching for non-Western names, no entity resolution.",
+      "system": "wire_transfer",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-SP-DEP-SQL",
+      "node_type": "Component",
+      "label": "sp_calculate_insurance.sql",
+      "description": "SQL stored procedure for deposit insurance calculation. Calculates per-account, not per-depositor. Hardcoded SMDIA. IRR falls through to SGL. No COB cutoff.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-SP-WIRE-SQL",
+      "node_type": "Component",
+      "label": "sp_calculate_wire_insurance.sql",
+      "description": "SQL stored procedure for wire transfer insurance calculation. Per-customer not aggregated. No cross-system aggregation. GOV collateral not checked. ACH returns not deducted.",
+      "system": "wire_transfer",
+      "evidence_fields": ["source_code_ref"],
+      "stop_condition": null,
+      "confidence_boost": 0.15
+    },
+    {
+      "node_id": "ONT-COMP-INSURANCE-PROPS",
+      "node_type": "Component",
+      "label": "insurance-rules.properties",
+      "description": "Configuration file for insurance rules. Hardcoded SMDIA. EBP mode=PER_PLAN. Only P01-P05 pending codes. IRR not in supported ORC list. No checksum generation. PII unencrypted.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["config_snapshot"],
+      "stop_condition": null,
+      "confidence_boost": 0.10
+    },
+    {
+      "node_id": "ONT-COMP-PIPELINE-TRANSFORM",
+      "node_type": "Component",
+      "label": "pipeline/stages/transformation.py",
+      "description": "Python pipeline transformation stage. Responsible for normalizing raw records and passing them to downstream stages. Risk of incorrectly subtracting hold_amount from balance.",
+      "system": "legacy_deposit",
+      "evidence_fields": ["stage_run_id", "transformation_log"],
+      "stop_condition": null,
+      "confidence_boost": 0.10
+    }
+  ],
+  "edges": [
+    {"from_node_id": "ONT-SYM-INSURANCE-OVERSTATEMENT", "to_node_id": "ONT-MECH-PER-ACCOUNT-CALC", "relationship": "CAUSED_BY", "weight": 0.90, "description": "Overstatement is the direct result of per-account calculation"},
+    {"from_node_id": "ONT-SYM-INSURANCE-OVERSTATEMENT", "to_node_id": "ONT-MECH-DECEASED-BENE-COUNTED", "relationship": "CAUSED_BY", "weight": 0.70, "description": "Deceased beneficiaries inflate trust coverage"},
+    {"from_node_id": "ONT-SYM-INSURANCE-UNDERSTATEMENT", "to_node_id": "ONT-MECH-IRR-NOT-IMPLEMENTED", "relationship": "CAUSED_BY", "weight": 0.90, "description": "IRR accounts get SGL coverage instead of per-beneficiary-interest"},
+    {"from_node_id": "ONT-SYM-INSURANCE-UNDERSTATEMENT", "to_node_id": "ONT-MECH-EBP-PER-PLAN", "relationship": "CAUSED_BY", "weight": 0.85, "description": "EBP plans with many participants are massively under-insured"},
+    {"from_node_id": "ONT-SYM-INSURANCE-UNDERSTATEMENT", "to_node_id": "ONT-MECH-CONTINGENT-BENE-IGNORED", "relationship": "CAUSED_BY", "weight": 0.80, "description": "REV trusts with contingent beneficiaries have lower coverage than entitled"},
+    {"from_node_id": "ONT-SYM-ORC-MISCLASSIFICATION", "to_node_id": "ONT-MECH-IRR-NOT-IMPLEMENTED", "relationship": "CAUSED_BY", "weight": 0.95, "description": "IRR accounts are misclassified as SGL due to missing code branch"},
+    {"from_node_id": "ONT-SYM-ORC-MISCLASSIFICATION", "to_node_id": "ONT-MECH-CUSTODIAL-SGL-DEFAULT", "relationship": "CAUSED_BY", "weight": 0.85, "description": "Custodial IRA accounts misclassified as SGL instead of CRA"},
+    {"from_node_id": "ONT-SYM-ORC-MISCLASSIFICATION", "to_node_id": "ONT-MECH-NATURAL-PERSON-SKIPPED", "relationship": "CAUSED_BY", "weight": 0.75, "description": "JNT may be misclassified without natural person verification"},
+    {"from_node_id": "ONT-SYM-RECONCILIATION-BREAK", "to_node_id": "ONT-MECH-ACH-RETURN-NOT-DEDUCTED", "relationship": "CAUSED_BY", "weight": 0.85, "description": "ACH returns not netted causes reconciliation mismatch"},
+    {"from_node_id": "ONT-SYM-UNSCREENED-WIRE", "to_node_id": "ONT-MECH-BATCH-OFAC-LAG", "relationship": "CAUSED_BY", "weight": 0.95, "description": "Batch OFAC lag means wires settle before screening completes"},
+    {"from_node_id": "ONT-SYM-PENDING-MISROUTE", "to_node_id": "ONT-MECH-IRR-NOT-IMPLEMENTED", "relationship": "CAUSED_BY", "weight": 0.80, "description": "IRR accounts with no pending code silently default"},
+    {"from_node_id": "ONT-MECH-PER-ACCOUNT-CALC", "to_node_id": "ONT-RC-MULTI-ACCT-AGG-MISSING", "relationship": "CAUSED_BY", "weight": 0.90, "description": "Per-account calc is due to aggregation logic never being built"},
+    {"from_node_id": "ONT-MECH-IRR-NOT-IMPLEMENTED", "to_node_id": "ONT-RC-MISSING-ORC-BRANCH", "relationship": "CAUSED_BY", "weight": 0.95, "description": "IRR fallthrough is directly caused by missing code branch"},
+    {"from_node_id": "ONT-MECH-EBP-PER-PLAN", "to_node_id": "ONT-RC-CONFIG-HARDCODE", "relationship": "CAUSED_BY", "weight": 0.80, "description": "EBP per-plan mode is configured in properties file"},
+    {"from_node_id": "ONT-MECH-BATCH-OFAC-LAG", "to_node_id": "ONT-RC-SCREENING-NOT-REALTIME", "relationship": "CAUSED_BY", "weight": 0.95, "description": "Batch lag is architectural — the system was never built for real-time"},
+    {"from_node_id": "ONT-MECH-CONTINGENT-BENE-IGNORED", "to_node_id": "ONT-RC-BENEFICIARY-FILTER-GAP", "relationship": "CAUSED_BY", "weight": 0.85, "description": "Contingent beneficiaries excluded due to missing filter logic"},
+    {"from_node_id": "ONT-MECH-DECEASED-BENE-COUNTED", "to_node_id": "ONT-RC-BENEFICIARY-FILTER-GAP", "relationship": "CAUSED_BY", "weight": 0.85, "description": "Deceased beneficiaries counted due to missing is_deceased filter"},
+    {"from_node_id": "ONT-MECH-CUSTODIAL-SGL-DEFAULT", "to_node_id": "ONT-RC-MISSING-ORC-BRANCH", "relationship": "CAUSED_BY", "weight": 0.85, "description": "CUS->CRA mapping was never implemented"},
+    {"from_node_id": "ONT-MECH-NATURAL-PERSON-SKIPPED", "to_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "relationship": "CAUSED_BY", "weight": 0.85, "description": "JNT natural person check was never coded"},
+    {"from_node_id": "ONT-MECH-HOLD-AMT-MISAPPLIED", "to_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "relationship": "CAUSED_BY", "weight": 0.80, "description": "Hold amount subtraction is a transformation logic error"},
+    {"from_node_id": "ONT-MECH-COLLATERAL-NOT-CHECKED", "to_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "relationship": "CAUSED_BY", "weight": 0.85, "description": "GOV collateral check was never implemented"},
+    {"from_node_id": "ONT-MECH-ACH-RETURN-NOT-DEDUCTED", "to_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "relationship": "CAUSED_BY", "weight": 0.80, "description": "ACH return netting was not implemented in reconciliation"},
+    {"from_node_id": "ONT-RC-MISSING-ORC-BRANCH", "to_node_id": "ONT-COMP-ORC-ASSIGN-COBOL", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Missing IRR branch in ORC assignment COBOL"},
+    {"from_node_id": "ONT-RC-MISSING-ORC-BRANCH", "to_node_id": "ONT-COMP-TRUST-CALC-COBOL", "relationship": "LOCATED_IN", "weight": 0.90, "description": "Missing IRR handling in trust insurance COBOL"},
+    {"from_node_id": "ONT-RC-MISSING-ORC-BRANCH", "to_node_id": "ONT-COMP-INSURANCE-PROPS", "relationship": "MASKED_BY", "weight": 0.70, "description": "IRR not in supported.orc.types masks the code gap"},
+    {"from_node_id": "ONT-RC-MULTI-ACCT-AGG-MISSING", "to_node_id": "ONT-COMP-SP-DEP-SQL", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Per-account calculation is in the SQL stored procedure"},
+    {"from_node_id": "ONT-RC-MULTI-ACCT-AGG-MISSING", "to_node_id": "ONT-COMP-DEPOSIT-CALC-COBOL", "relationship": "LOCATED_IN", "weight": 0.80, "description": "COBOL calc also processes per-account"},
+    {"from_node_id": "ONT-RC-CONFIG-HARDCODE", "to_node_id": "ONT-COMP-INSURANCE-PROPS", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Hardcoded values are in the properties file"},
+    {"from_node_id": "ONT-RC-CONFIG-INCOMPLETE", "to_node_id": "ONT-COMP-INSURANCE-PROPS", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Missing pending codes are in the properties file"},
+    {"from_node_id": "ONT-RC-SCREENING-NOT-REALTIME", "to_node_id": "ONT-COMP-OFAC-PYTHON", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Batch screening architecture is in ofac_screening.py"},
+    {"from_node_id": "ONT-RC-BENEFICIARY-FILTER-GAP", "to_node_id": "ONT-COMP-TRUST-CALC-COBOL", "relationship": "LOCATED_IN", "weight": 1.0, "description": "Missing beneficiary filters are in TRUST-INSURANCE-CALC.cob"},
+    {"from_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "to_node_id": "ONT-COMP-PIPELINE-TRANSFORM", "relationship": "LOCATED_IN", "weight": 0.80, "description": "Hold amount logic is in transformation stage"},
+    {"from_node_id": "ONT-RC-VALIDATION-RULE-MISSING", "to_node_id": "ONT-COMP-SP-WIRE-SQL", "relationship": "LOCATED_IN", "weight": 0.80, "description": "ACH return and collateral checks are in wire SQL proc"}
+  ]
+}

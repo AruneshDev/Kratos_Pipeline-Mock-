@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mybank_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mybank}
+      POSTGRES_USER: ${POSTGRES_USER:-mybank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mybank_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mybank} -d ${POSTGRES_DB:-mybank}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mybank_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mybank}:${POSTGRES_PASSWORD:-mybank_dev}@postgres:5432/${POSTGRES_DB:-mybank}
+      SYNC_DATABASE_URL: postgresql://${POSTGRES_USER:-mybank}:${POSTGRES_PASSWORD:-mybank_dev}@postgres:5432/${POSTGRES_DB:-mybank}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SMDIA: ${SMDIA:-250000.00}
+      SEED_DATA_PATH: /app/app/seed/data
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+      - ./seed_data:/app/app/seed/data
+    restart: unless-stopped
+
+volumes:
+  pg_data:
