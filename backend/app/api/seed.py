@@ -420,6 +420,267 @@ async def _seed_scn002(db: AsyncSession) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Scenario SCN-001 seed — Deposit Aggregation Failure
+# ─────────────────────────────────────────────────────────────────────
+
+async def _seed_scn001(db: AsyncSession) -> int:
+    """
+    SCN-001: Per-Depositor ORC Aggregation Failure (CTL-DEP-001, P1).
+
+    Seeds multiple SGL accounts under the SAME party so the combined balance
+    exceeds SMDIA ($250K). The control checks GROUP BY (party_id, orc_code)
+    HAVING SUM(balance) > SMDIA.
+    """
+    # Ensure the party exists
+    party_id = "11111111-aaaa-bbbb-cccc-000000000001"
+    await db.execute(
+        text("""
+            INSERT INTO parties (party_id, name, party_type, source_system, source_record_id)
+            VALUES (:pid, 'Margaret Thornton', 'Individual', 'legacy_deposit', 'CUST-SCN001')
+            ON CONFLICT DO NOTHING
+        """),
+        {"pid": party_id},
+    )
+    # Two SGL accounts for same party — combined $425K > $250K SMDIA
+    await db.execute(text("DELETE FROM accounts WHERE source_system = 'scn001_seed'"))
+    accounts = [
+        ("ACCT-SCN001-A", "SGL", "225000.00", "Savings"),
+        ("ACCT-SCN001-B", "SGL", "200000.00", "Checking"),
+    ]
+    for acct_num, orc, bal, atype in accounts:
+        await db.execute(
+            text("""
+                INSERT INTO accounts
+                    (account_id, account_number, account_type, party_id,
+                     orc_code, balance, accrued_interest, source_system, is_active)
+                VALUES (gen_random_uuid(), :acct, :atype, :pid, :orc, :bal, 0, 'scn001_seed', true)
+            """),
+            {"acct": acct_num, "atype": atype, "pid": party_id, "orc": orc, "bal": bal},
+        )
+    return len(accounts)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Scenario SCN-003 seed — OFAC Screening Bypass
+# ─────────────────────────────────────────────────────────────────────
+
+async def _seed_scn003(db: AsyncSession) -> int:
+    """
+    SCN-003: Settled Wire Without OFAC Screening (CTL-WIRE-001, P1).
+
+    Seeds a SETTLED wire with ofac_status='NOT_SCREENED'. The control checks
+    WHERE status='SETTLED' AND ofac_status='NOT_SCREENED'.
+    """
+    wires = [
+        {
+            "reference": "WT-SCN003-001",
+            "message_type": "MT103",
+            "direction": "OUTBOUND",
+            "ordering_name": "Apex Global Trading LLC",
+            "beneficiary_name": "Dubai Maritime Services FZE",
+            "beneficiary_account": "AE070331234567890123456",
+            "amount": "185000.00",
+            "currency": "USD",
+            "status": "SETTLED",
+            "orc_type": "BUS",
+            "settlement_channel": "SWIFT",
+            "ofac_status": "NOT_SCREENED",
+            "value_date": "2026-03-25",
+        },
+        {
+            "reference": "WT-SCN003-002",
+            "message_type": "MT103",
+            "direction": "OUTBOUND",
+            "ordering_name": "Horizon Exports Inc",
+            "beneficiary_name": "Al-Rashid Industrial Group",
+            "beneficiary_account": "SA0380000000608010167519",
+            "amount": "320000.00",
+            "currency": "USD",
+            "status": "SETTLED",
+            "orc_type": "BUS",
+            "settlement_channel": "SWIFT",
+            "ofac_status": "NOT_SCREENED",
+            "value_date": "2026-03-26",
+        },
+    ]
+    await db.execute(text("DELETE FROM wire_transactions WHERE source_system = 'scn003_seed'"))
+    for w in wires:
+        params = {**w, "value_date": _parse_date(w["value_date"])}
+        await db.execute(
+            text("""
+                INSERT INTO wire_transactions
+                    (wire_id, reference, message_type, direction,
+                     ordering_name, beneficiary_name, beneficiary_account,
+                     amount, currency, status, orc_type,
+                     settlement_channel, ofac_status, value_date, source_system)
+                VALUES (gen_random_uuid(), :reference, :message_type, :direction,
+                     :ordering_name, :beneficiary_name, :beneficiary_account,
+                     :amount, :currency, :status, :orc_type,
+                     :settlement_channel, :ofac_status, :value_date, 'scn003_seed')
+            """),
+            params,
+        )
+    return len(wires)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Scenario SCN-004 seed — Stale ACH Pending
+# ─────────────────────────────────────────────────────────────────────
+
+async def _seed_scn004(db: AsyncSession) -> int:
+    """
+    SCN-004: Stale ACH Wire Pending Beyond Settlement Window (CTL-WIRE-004, P1).
+
+    Seeds ACH wires with status='PENDING' and value_date older than 2 business
+    days. The control checks WHERE settlement_channel='ACH' AND status='PENDING'
+    AND value_date < CURRENT_DATE - INTERVAL '2 days'.
+    """
+    wires = [
+        {
+            "reference": "WT-SCN004-001",
+            "message_type": "ACH",
+            "direction": "OUTBOUND",
+            "ordering_name": "Midwest Manufacturing Corp",
+            "beneficiary_name": "Steel Supply Partners LLC",
+            "beneficiary_account": "072000326-4455667788",
+            "amount": "47500.00",
+            "currency": "USD",
+            "status": "PENDING",
+            "orc_type": "BUS",
+            "settlement_channel": "ACH",
+            "ofac_status": "CLEARED",
+            "value_date": "2026-03-20",
+        },
+        {
+            "reference": "WT-SCN004-002",
+            "message_type": "ACH",
+            "direction": "INBOUND",
+            "ordering_name": "State Pension Fund",
+            "beneficiary_name": "First National Payroll Acct",
+            "beneficiary_account": "021000021-9988776655",
+            "amount": "125000.00",
+            "currency": "USD",
+            "status": "PENDING",
+            "orc_type": "GOV",
+            "settlement_channel": "ACH",
+            "ofac_status": "CLEARED",
+            "value_date": "2026-03-18",
+        },
+    ]
+    await db.execute(text("DELETE FROM wire_transactions WHERE source_system = 'scn004_seed'"))
+    for w in wires:
+        params = {**w, "value_date": _parse_date(w["value_date"])}
+        await db.execute(
+            text("""
+                INSERT INTO wire_transactions
+                    (wire_id, reference, message_type, direction,
+                     ordering_name, beneficiary_name, beneficiary_account,
+                     amount, currency, status, orc_type,
+                     settlement_channel, ofac_status, value_date, source_system)
+                VALUES (gen_random_uuid(), :reference, :message_type, :direction,
+                     :ordering_name, :beneficiary_name, :beneficiary_account,
+                     :amount, :currency, :status, :orc_type,
+                     :settlement_channel, :ofac_status, :value_date, 'scn004_seed')
+            """),
+            params,
+        )
+    return len(wires)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Scenario SCN-005 seed — JNT Missing Co-Owner
+# ─────────────────────────────────────────────────────────────────────
+
+async def _seed_scn005(db: AsyncSession) -> int:
+    """
+    SCN-005: JNT Account Missing Second Owner (CTL-DEP-005, P2).
+
+    Seeds JNT accounts WITHOUT joint_owner_id. The control checks
+    WHERE orc_code='JNT' AND joint_owner_id IS NULL.
+    """
+    party_id = "22222222-aaaa-bbbb-cccc-000000000002"
+    await db.execute(
+        text("""
+            INSERT INTO parties (party_id, name, party_type, source_system, source_record_id)
+            VALUES (:pid, 'Robert & Ellen Park', 'Individual', 'legacy_deposit', 'CUST-SCN005')
+            ON CONFLICT DO NOTHING
+        """),
+        {"pid": party_id},
+    )
+    accounts = [
+        ("ACCT-SCN005-A", "175000.00", "Joint Savings"),
+        ("ACCT-SCN005-B", "92000.00", "Joint Checking"),
+    ]
+    await db.execute(text("DELETE FROM accounts WHERE source_system = 'scn005_seed'"))
+    for acct_num, bal, atype in accounts:
+        await db.execute(
+            text("""
+                INSERT INTO accounts
+                    (account_id, account_number, account_type, party_id,
+                     orc_code, balance, accrued_interest, joint_owner_id,
+                     source_system, is_active)
+                VALUES (gen_random_uuid(), :acct, :atype, :pid,
+                        'JNT', :bal, 0, NULL,
+                        'scn005_seed', true)
+            """),
+            {"acct": acct_num, "atype": atype, "pid": party_id, "bal": bal},
+        )
+    return len(accounts)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Scenario SCN-006 seed — EBP Coverage Overstatement
+# ─────────────────────────────────────────────────────────────────────
+
+async def _seed_scn006(db: AsyncSession) -> int:
+    """
+    SCN-006: EBP Per-Participant Coverage Exceeds SMDIA (CTL-TRUST-003, P2).
+
+    Seeds an EBP trust where balance / participant_count > $250K.
+    The control checks WHERE trust_type='EBP' AND balance/participant_count > SMDIA.
+    """
+    trusts = [
+        {
+            "trust_id": "TR-SCN006-A",
+            "trust_name": "Municipal Workers Pension Plan - Metro City",
+            "trust_type": "EBP",
+            "balance": "18500000.00",
+            "accrued_interest": "32000.00",
+            "beneficiary_count": 45,
+            "participant_count": 45,
+            "orc_assigned": "EBP",
+            "trust_status": "A",
+        },
+        {
+            "trust_id": "TR-SCN006-B",
+            "trust_name": "Teachers Retirement Fund - Lakewood District",
+            "trust_type": "EBP",
+            "balance": "8200000.00",
+            "accrued_interest": "15000.00",
+            "beneficiary_count": 28,
+            "participant_count": 28,
+            "orc_assigned": "EBP",
+            "trust_status": "A",
+        },
+    ]
+    for t in trusts:
+        await db.execute(
+            text("""
+                INSERT INTO trust_accounts
+                    (trust_id, trust_name, trust_type, balance, accrued_interest,
+                     beneficiary_count, participant_count, orc_assigned, trust_status, source_system)
+                VALUES (:trust_id, :trust_name, :trust_type, :balance, :accrued_interest,
+                     :beneficiary_count, :participant_count, :orc_assigned, :trust_status, 'scn006_seed')
+                ON CONFLICT (trust_id) DO UPDATE SET
+                    balance = EXCLUDED.balance,
+                    participant_count = EXCLUDED.participant_count
+            """),
+            t,
+        )
+    return len(trusts)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Router endpoint
 # ─────────────────────────────────────────────────────────────────────
 
@@ -427,8 +688,7 @@ async def _seed_scn002(db: AsyncSession) -> int:
 async def load_seed(db: AsyncSession = Depends(get_db)):
     """
     Idempotent seed load. Safe to call multiple times.
-    Loads: ontology nodes/edges, controls, sample accounts, trusts, wires,
-    and the SCN-002 scenario IRR trusts.
+    Loads: ontology nodes/edges, controls, sample data, and all 6 demo scenarios.
     """
     results = {}
     try:
@@ -439,7 +699,14 @@ async def load_seed(db: AsyncSession = Depends(get_db)):
         results["accounts"] = await _load_accounts(db)
         results["trusts"] = await _load_trusts(db)
         results["wires"] = await _load_wires(db)
-        results["scn002_trusts"] = await _seed_scn002(db)
+
+        # Seed all 6 demo scenarios
+        results["scn001_deposit_aggregation"] = await _seed_scn001(db)
+        results["scn002_irr_misclassification"] = await _seed_scn002(db)
+        results["scn003_ofac_bypass"] = await _seed_scn003(db)
+        results["scn004_stale_ach"] = await _seed_scn004(db)
+        results["scn005_jnt_missing_owner"] = await _seed_scn005(db)
+        results["scn006_ebp_overstatement"] = await _seed_scn006(db)
 
         await db.commit()
         log.info("Seed load complete: %s", results)
